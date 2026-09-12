@@ -381,7 +381,7 @@ groq_model = st.sidebar.selectbox(
         "llama-3.1-8b-instant",
         "mixtral-8x7b-32768",
     ],
-    index=0,
+    index=2,
     help="Choose model for analysis"
 )
 
