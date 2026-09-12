@@ -1,6 +1,6 @@
 """
 RootIQ: Evidence-based root-cause analysis platform.
-COMPLETE - NO GROQ DEPENDENCY (Data-driven only)
+COMPLETE - With User API Key Input
 """
 
 import streamlit as st
@@ -8,6 +8,7 @@ import pandas as pd
 import json
 import os
 from datetime import datetime
+from groq import Groq
 import plotly.express as px
 
 st.set_page_config(
@@ -26,8 +27,13 @@ if "df" not in st.session_state:
     st.session_state.df = None
 if "results" not in st.session_state:
     st.session_state.results = None
+if "ai_results" not in st.session_state:
+    st.session_state.ai_results = None
 
 class DataLoadError(Exception):
+    pass
+
+class AIProviderError(Exception):
     pass
 
 def load_data(uploaded_file):
@@ -305,15 +311,87 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     return report
 
 # ============================================================================
-# SIDEBAR
+# GROQ AI WITH USER API KEY INPUT
+# ============================================================================
+
+def analyze_with_groq(payload, business_type, api_key, model_name):
+    """Call Groq with user-provided API key."""
+    
+    if not api_key:
+        raise AIProviderError("Groq API Key required. Add in sidebar.")
+    
+    try:
+        client = Groq(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are RootIQ analyst. Respond with JSON: {\"executive_summary\": \"text\", \"key_findings\": []}"},
+                {"role": "user", "content": f"Business: {business_type}\n\nFindings:\n{json.dumps(payload, indent=2, default=str)}"}
+            ],
+            temperature=0.2,
+            max_tokens=500,
+        )
+        
+        raw_text = response.choices[0].message.content.strip()
+        
+        try:
+            if "```json" in raw_text:
+                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_text:
+                raw_text = raw_text.split("```")[1].split("```")[0].strip()
+            
+            return json.loads(raw_text)
+        except:
+            return {"executive_summary": raw_text[:300], "key_findings": ["Analysis generated"]}
+    
+    except Exception as e:
+        raise AIProviderError(f"Groq error: {str(e)}")
+
+# ============================================================================
+# SIDEBAR - WITH API KEY INPUT
 # ============================================================================
 
 st.sidebar.header("📤 Upload & Configure")
 uploaded_file = st.sidebar.file_uploader("Upload data (CSV, XLSX, JSON)", type=["csv", "xlsx", "json"])
 st.sidebar.divider()
+
 business_type = st.sidebar.text_input("Business Type", placeholder="E-commerce")
 dataset_description = st.sidebar.text_area("Dataset Description", placeholder="Sales data")
 st.sidebar.divider()
+
+# ========== API KEY INPUT ==========
+st.sidebar.header("🔑 Groq API Configuration")
+
+groq_api_key = st.sidebar.text_input(
+    "Groq API Key",
+    type="password",
+    placeholder="gsk_...",
+    help="Get from https://console.groq.com/keys"
+)
+
+# If no API key in input, try secrets
+if not groq_api_key:
+    groq_api_key = st.secrets.get("GROQ_API_KEY", "")
+
+groq_model = st.sidebar.selectbox(
+    "Groq Model",
+    options=[
+        "llama-2-70b-4096",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+    ],
+    index=0,
+    help="Choose model for analysis"
+)
+
+if groq_api_key:
+    st.sidebar.success("✅ API Key configured")
+else:
+    st.sidebar.warning("⚠️ No API Key (AI features disabled)")
+
+st.sidebar.divider()
+
 analyze_button = st.sidebar.button("🔬 Analyze", use_container_width=True, type="primary")
 
 # ============================================================================
@@ -379,15 +457,34 @@ if analyze_button:
             "hypotheses": hypotheses,
             "recommendations": recommendations,
         }
+        
+        # Try AI if API key available
+        if groq_api_key and problems:
+            try:
+                payload = {
+                    "row_count": profile["row_count"],
+                    "problems": problems[:5],
+                    "stats": stats,
+                }
+                ai_results = analyze_with_groq(payload, business_type, groq_api_key, groq_model)
+                st.session_state.ai_results = ai_results
+            except AIProviderError as e:
+                st.info(f"ℹ️ {str(e)}")
+                st.session_state.ai_results = None
+        
         st.session_state.analysis_complete = True
     
     st.success("✅ Complete!")
 
 if st.session_state.analysis_complete:
     results = st.session_state.results
+    ai_results = st.session_state.ai_results
     
     st.header("📝 Summary")
-    st.info(f"**{len(results['problems'])} problems detected** from data analysis.")
+    if ai_results:
+        st.write(ai_results.get("executive_summary", ""))
+    else:
+        st.info(f"**{len(results['problems'])} problems detected** from data analysis.")
     st.divider()
     
     st.header("📈 Metrics")
