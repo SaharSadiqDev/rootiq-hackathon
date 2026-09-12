@@ -1,5 +1,7 @@
-streamlit
-pandas
-plotly
-openpyxl
-python-dateutil
+streamlit>=1.28
+pandas>=2.0
+plotly>=5
+openpyxl>=3.10
+python-dateutil>=2.8
+groq>=0.4
+google-generativeai>=0.3
